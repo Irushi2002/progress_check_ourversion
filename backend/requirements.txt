@@ -8,3 +8,4 @@ pydantic
 python-multipart
 python-dateutil
 dnspython
+httpx

@@ -24,24 +24,24 @@ class AIFollowupService:
         self.model = genai.GenerativeModel(Config.GEMINI_MODEL)
         self.db = get_database()
         
-    async def generate_followup_questions(self, user_id: str, work_update_data: Optional[Dict[str, Any]] = None) -> List[str]:
-        "Generate follow-up questions based on current work update and history"
+    async def generate_followup_questions(self, intern_id: str, work_update_data: Optional[Dict[str, Any]] = None) -> List[str]:
+        "Generate follow-up questions based on current work update and history (updated for ProHub integration)"
         try:
-            logger.info(f"Starting AI question generation for user: {user_id}")
+            logger.info(f"Starting AI question generation for intern: {intern_id}")
             
-            # Get user's recent work updates (last 7 days) for context
+            # Get intern's recent work updates (last 7 days) for context
             week_ago = datetime.now() - timedelta(days=7)
             
-            # Query BOTH permanent AND temporary collections
+            # Query BOTH permanent AND temporary collections using internId
             work_updates_collection = self.db[Config.WORK_UPDATES_COLLECTION]
             temp_updates_collection = self.db[Config.TEMP_WORK_UPDATES_COLLECTION]
             
             # Get permanent work updates
-            permanent_cursor = work_updates_collection.find({"userId": user_id})
+            permanent_cursor = work_updates_collection.find({"internId": intern_id})
             permanent_updates = await permanent_cursor.to_list(None)
             
             # Get temporary work updates  
-            temp_cursor = temp_updates_collection.find({"userId": user_id})
+            temp_cursor = temp_updates_collection.find({"internId": intern_id})
             temp_updates = await temp_cursor.to_list(None)
             
             # Combine both collections
@@ -109,43 +109,56 @@ class AIFollowupService:
         return timestamp
     
     def _build_current_work_context(self, work_data: Dict[str, Any]) -> str:
-        "Build context string from current work update"
+        "Build context string from current work update (LogBook field mapping)"
         context_lines = ["CURRENT WORK UPDATE:"]
         
-        # Work description (required)
-        description = work_data.get('description', '').strip()
-        if description:
-            context_lines.append(f"Work Description: {description}")
+        # Task description (maps to LogBook's 'task' field)
+        task = work_data.get('description', '').strip()  # AI service uses 'description', LogBook uses 'task'
+        if task:
+            context_lines.append(f"Work Description: {task}")
         
-        # Challenges (optional)
+        # Progress/Challenges (maps to LogBook's 'progress' field)
         challenges = work_data.get('challenges', '').strip() if work_data.get('challenges') else None
         if challenges:
             context_lines.append(f"Challenges Today: {challenges}")
         
-       
+        # Plans/Blockers (maps to LogBook's 'blockers' field)
+        plans = work_data.get('plans', '').strip() if work_data.get('plans') else None
+        if plans:
+            context_lines.append(f"Plans for Tomorrow: {plans}")
         
         context_lines.append("---")
         return '\n'.join(context_lines)
     
     def _build_work_history_context(self, docs: List[Dict[str, Any]]) -> str:
-        "Build context string from work update history"
+        "Build context string from work update history (LogBook field mapping)"
         context_lines = ["RECENT WORK HISTORY:"]
         
         for i, doc in enumerate(docs):
             date_time = self._extract_timestamp(doc)
-            description = doc.get('description', '').strip()
-            challenges = doc.get('challenges', '').strip() if doc.get('challenges') else None
-            plans = doc.get('plans', '').strip() if doc.get('plans') else None
+            
+            # Map LogBook fields to AI service expected fields
+            task = doc.get('task', '').strip()  # LogBook's task field
+            progress = doc.get('progress', '').strip() if doc.get('progress') else None  # LogBook's progress field
+            blockers = doc.get('blockers', '').strip() if doc.get('blockers') else None  # LogBook's blockers field
+            
+            # Fallback to old field names for backward compatibility
+            if not task:
+                task = doc.get('description', '').strip()
+            if not progress:
+                progress = doc.get('challenges', '').strip() if doc.get('challenges') else None
+            if not blockers:
+                blockers = doc.get('plans', '').strip() if doc.get('plans') else None
             
             date_str = date_time.strftime('%Y-%m-%d') if date_time else 'Unknown'
             
             context_lines.append(f"Date: {date_str}")
-            if description:
-                context_lines.append(f"Work: {description}")
-            if challenges:
-                context_lines.append(f"Challenges: {challenges}")
-            if plans:
-                context_lines.append(f"Plans: {plans}")
+            if task:
+                context_lines.append(f"Work: {task}")
+            if progress:
+                context_lines.append(f"Challenges: {progress}")
+            if blockers:
+                context_lines.append(f"Plans: {blockers}")
             context_lines.append("---")
         
         return '\n'.join(context_lines)
@@ -158,10 +171,6 @@ class AIFollowupService:
         yesterday_plans = self._extract_yesterday_plans_from_recent_docs(recent_docs)
         current_challenges = self._extract_current_challenges(current_context)
         seven_day_history = history_context
-
- 
-
-
 
         prompt = f"""You're helping a supervisor create simple, easy-to-answer follow-up questions for an intern's daily work update.
 
@@ -177,7 +186,6 @@ Generate exactly 3 simple questions that:
 4. When says they completed a task,ask them to describe the steps they followed in a general but specific-enough way, so we can understand how the work was approached and verify it was actually done
 7. If {yesterday_plans} exists verify {today_work_update} matches {yesterday_plans} naturally .
 
-
 Avoid questions about:
 - Feelings or emotions
 - Complex technical details
@@ -189,11 +197,9 @@ Format your response as:
 3. [Third simple question]"""
 
         return prompt
-        
- 
     
     def _extract_yesterday_plans_from_recent_docs(self, recent_docs: List[Dict[str, Any]]) -> str:
-        """Extract yesterday's plans from the most recent work update that has plans"""
+        """Extract yesterday's plans from the most recent work update that has plans (LogBook field mapping)"""
         if not recent_docs:
             return "No previous plans found"
         
@@ -203,13 +209,13 @@ Format your response as:
         for doc in recent_docs:
             timestamp = self._extract_timestamp(doc)
             if timestamp and timestamp.date() == yesterday:
-                plans = doc.get('plans', '').strip()
+                # Try LogBook's blockers field first, then fall back to old plans field
+                plans = doc.get('blockers', '').strip() or doc.get('plans', '').strip()
                 if plans:
                     logger.info(f"Found yesterday's plans from {timestamp.date()}: {plans[:50]}...")
                     return plans
         
         # If no plans found for yesterday, get the most recent plans available
-        # (excluding today's entry if it exists)
         today = datetime.now().date()
         
         for doc in recent_docs:
@@ -218,7 +224,8 @@ Format your response as:
             if timestamp and timestamp.date() == today:
                 continue
                 
-            plans = doc.get('plans', '').strip()
+            # Try LogBook's blockers field first, then fall back to old plans field
+            plans = doc.get('blockers', '').strip() or doc.get('plans', '').strip()
             if plans:
                 date_str = timestamp.strftime('%Y-%m-%d') if timestamp else 'Unknown date'
                 logger.info(f"Found most recent plans from {date_str}: {plans[:50]}...")
@@ -226,12 +233,6 @@ Format your response as:
         
         logger.info("No previous plans found in recent work updates")
         return "No previous plans found"
-    
-    def _extract_yesterday_plans_from_history(self, history_context: str) -> str:
-        """DEPRECATED: Extract yesterday's plans from history context string - kept for backward compatibility"""
-        # This method is now deprecated and replaced by _extract_yesterday_plans_from_recent_docs
-        # But keeping it in case it's called elsewhere
-        return self._extract_yesterday_plans_from_recent_docs([])
     
     def _extract_current_challenges(self, current_context: str) -> str:
         """Extract current challenges from current work context"""
@@ -244,18 +245,6 @@ Format your response as:
                 break
         
         return challenges
-    
-    def _extract_tomorrow_plans(self, current_context: str) -> str:
-        """Extract tomorrow's plans from current work context"""
-        lines = current_context.split('\n')
-        plans = "No plans mentioned"
-        
-        for line in lines:
-            if line.strip().startswith('Plans for Tomorrow:'):
-                plans = line.replace('Plans for Tomorrow:', '').strip()
-                break
-        
-        return plans
     
     def _parse_questions_from_response(self, response: str) -> List[str]:
         questions = []
@@ -296,7 +285,6 @@ Format your response as:
         if len(questions) < 3:
             logger.info("Numbered format parsing yielded few results, trying pattern matching...")
             questions = []  
-            
             
             for line in lines:
                 trimmed = line.strip()
@@ -341,20 +329,18 @@ Format your response as:
             "What new skills or concepts have you learned recently that you'd like to discuss?"
         ]
     
-    async def save_followup_session(self, user_id: str, questions: List[str]) -> str:
-        """Save follow-up session to MongoDB"""
-        logger.info(f"Called save_followup_session with userId: {user_id}")
+    async def save_followup_session(self, intern_id: str, questions: List[str]) -> str:
+        """Save follow-up session to MongoDB (updated for ProHub integration)"""
+        logger.info(f"Called save_followup_session with internId: {intern_id}")
         
         try:
-            #formatted_date = datetime.now().strftime('%Y-%m-%d')
-            #session_id = f"{user_id}_{formatted_date}"
-            session_id = f"{user_id}_{uuid.uuid4().hex}"
+            session_id = f"{intern_id}_{uuid.uuid4().hex}"
             
             followup_collection = self.db[Config.FOLLOWUP_SESSIONS_COLLECTION]
             
             session_doc = {
                 "_id": session_id,
-                "userId": user_id,
+                "internId": intern_id,  # Changed from userId to internId
                 "questions": questions,
                 "answers": [""] * len(questions),
                 "status": SessionStatus.PENDING,
@@ -400,14 +386,14 @@ Format your response as:
             logger.error(f"Failed to update follow-up answers: {e}")
             raise Exception(f"Failed to update follow-up answers: {e}")
     
-    async def get_pending_followup_session(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get pending follow-up session for user"""
+    async def get_pending_followup_session(self, intern_id: str) -> Optional[Dict[str, Any]]:
+        """Get pending follow-up session for intern (updated for ProHub integration)"""
         try:
             followup_collection = self.db[Config.FOLLOWUP_SESSIONS_COLLECTION]
             
             cursor = followup_collection.find(
                 {
-                    "userId": user_id,
+                    "internId": intern_id,  # Changed from userId to internId
                     "status": SessionStatus.PENDING
                 }
             ).sort("createdAt", DESCENDING).limit(1)
@@ -423,14 +409,12 @@ Format your response as:
                 result.update(session)
                 return result
             
-            logger.info(f"No pending sessions found for user: {user_id}")
+            logger.info(f"No pending sessions found for intern: {intern_id}")
             return None
             
         except Exception as e:
             logger.error(f"Error getting pending follow-up session: {e}")
             return None
-    
-
     
     async def test_ai_connection(self) -> bool:
         """Test method to check if AI is working"""
