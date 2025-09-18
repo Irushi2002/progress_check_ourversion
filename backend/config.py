@@ -13,6 +13,9 @@ class Config:
     MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
     DATABASE_NAME = os.getenv("DATABASE_NAME", "intern_progress")
     
+    # Add this line to your Config class
+    PROHUB_API_KEY = os.getenv("PROHUB_API_KEY", os.getenv("API_SECRET_KEY"))
+ 
     # Google AI Configuration
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 

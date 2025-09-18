@@ -384,10 +384,15 @@ class ProHubIntegration:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # 🔥 FIX: Change from GET to POST request
                 # The ProHub API expects POST, not GET
+                # headers = {
+                #     'Content-Type': 'application/json',
+                #     'Accept': 'application/json'
+                # }
                 headers = {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                }
+                       'Content-Type': 'application/json',
+                       'Accept': 'application/json',
+                       'Authorization': f'Bearer {Config.PROHUB_API_KEY}'
+                  }
                 
                 # Try POST request first (most likely correct)
                 try:
