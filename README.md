@@ -10,8 +10,6 @@ Intern progress tracking application with AI features
 
 \## Structure
 
-\- `frontend/` - Frontend application  
-
 \- `backend/` - Backend API/services
 
 
@@ -19,16 +17,6 @@ Intern progress tracking application with AI features
 \## Setup Instructions
 
 
-
-\### Frontend
-
-```bash
-
-cd frontend
-
-npm install
-
-npm start
 
 
 ### Backend
@@ -38,7 +26,8 @@ pip install -r requirements.txt
 python -m uvicorn main:app --reload
 
 ##test with real user
-##use valid email
+##use valid email registred in prohub logbook
+#run these commands in your terminal/command prompt
 #workupdate
 curl -X POST http://127.0.0.1:8000/api/work-updates -H "Content-Type: application/json" -H "X-User-Email: real.trainee@gmail.com" -d "{\"status\":\"working\",\"stack\":\"React\",\"task\":\"Testing API\",\"progress\":\"Testing\",\"blockers\":\"None\"}"
 
