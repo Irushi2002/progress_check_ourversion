@@ -113,6 +113,49 @@ async def verify_ttl_index():
         logger.error(f"Failed to verify TTL index: {e}")
         return False
 
+# async def create_indexes():
+#     """Create necessary indexes for ProHub integration (using internId instead of userId)"""
+#     try:
+#         # Work updates indexes
+#         work_updates = database.database[Config.WORK_UPDATES_COLLECTION]
+#         await work_updates.create_index("internId")
+#         await work_updates.create_index([("internId", 1), ("submittedAt", DESCENDING)])
+#         await work_updates.create_index([("internId", 1), ("update_date", 1)], unique=True)
+        
+#         # Index for tracking incomplete follow-ups
+#         await work_updates.create_index([("internId", 1), ("followupCompleted", 1)])
+#         await work_updates.create_index([("followupCompleted", 1), ("submittedAt", DESCENDING)])
+        
+#         # Temporary work updates indexes (non-TTL indexes)
+#         temp_work_updates = database.database[TEMP_WORK_UPDATES_COLLECTION]
+#         await temp_work_updates.create_index("internId")
+#         await temp_work_updates.create_index([("internId", 1), ("update_date", 1)], unique=True)
+#         await temp_work_updates.create_index([("submittedAt", 1), ("status", 1)])
+        
+#         # Followup sessions indexes using internId
+#         followup_sessions = database.database[Config.FOLLOWUP_SESSIONS_COLLECTION]
+#         await followup_sessions.create_index("internId")
+#         await followup_sessions.create_index([("internId", 1), ("status", 1)])
+#         await followup_sessions.create_index([("internId", 1), ("createdAt", DESCENDING)])
+#         await followup_sessions.create_index([("internId", 1), ("session_date", 1)], unique=True)
+        
+#         # Index for linking sessions to work updates
+#         await followup_sessions.create_index("workUpdateId")
+#         await followup_sessions.create_index("tempWorkUpdateId")
+#         await followup_sessions.create_index([("workUpdateId", 1), ("status", 1)])
+        
+#         # Compound index for efficient pending session queries
+#         await followup_sessions.create_index([
+#             ("internId", 1), 
+#             ("status", 1), 
+#             ("createdAt", DESCENDING)
+#         ])
+        
+#         logger.info("Database indexes created successfully (ProHub integration)")
+        
+#     except Exception as e:
+#         logger.warning(f"Failed to create indexes: {e}")
+
 async def create_indexes():
     """Create necessary indexes for ProHub integration (using internId instead of userId)"""
     try:
@@ -134,10 +177,25 @@ async def create_indexes():
         
         # Followup sessions indexes using internId
         followup_sessions = database.database[Config.FOLLOWUP_SESSIONS_COLLECTION]
+        
+        # IMPORTANT: Drop old userId-based indexes first
+        try:
+            existing_indexes = await followup_sessions.list_indexes().to_list(length=None)
+            for index in existing_indexes:
+                index_name = index.get('name', '')
+                if 'userId' in index_name:
+                    logger.info(f"Dropping old userId-based index: {index_name}")
+                    await followup_sessions.drop_index(index_name)
+        except Exception as e:
+            logger.warning(f"Could not drop old indexes (may not exist): {e}")
+        
+        # Create new internId-based indexes
         await followup_sessions.create_index("internId")
         await followup_sessions.create_index([("internId", 1), ("status", 1)])
         await followup_sessions.create_index([("internId", 1), ("createdAt", DESCENDING)])
-        await followup_sessions.create_index([("internId", 1), ("session_date", 1)], unique=True)
+        
+        # FIXED: Create unique index with internId instead of userId
+        await followup_sessions.create_index([("internId", 1), ("session_date", 1)], unique=True, name="internId_session_date_unique")
         
         # Index for linking sessions to work updates
         await followup_sessions.create_index("workUpdateId")
@@ -151,10 +209,42 @@ async def create_indexes():
             ("createdAt", DESCENDING)
         ])
         
-        logger.info("Database indexes created successfully (ProHub integration)")
+        logger.info("Database indexes created successfully (ProHub integration with internId)")
         
     except Exception as e:
         logger.warning(f"Failed to create indexes: {e}")
+
+
+# Alternative: Manual index cleanup script
+async def cleanup_old_indexes():
+    """Manually clean up old userId-based indexes"""
+    try:
+        followup_sessions = database.database[Config.FOLLOWUP_SESSIONS_COLLECTION]
+        
+        # List all indexes
+        existing_indexes = await followup_sessions.list_indexes().to_list(length=None)
+        
+        logger.info("Current indexes in followup_sessions:")
+        for index in existing_indexes:
+            logger.info(f"  - {index.get('name')}: {index.get('key')}")
+        
+        # Drop problematic indexes
+        indexes_to_drop = []
+        for index in existing_indexes:
+            index_name = index.get('name', '')
+            if 'userId' in index_name:
+                indexes_to_drop.append(index_name)
+        
+        for index_name in indexes_to_drop:
+            if index_name != '_id_':  # Never drop the _id index
+                logger.info(f"Dropping old index: {index_name}")
+                await followup_sessions.drop_index(index_name)
+        
+        logger.info("Old userId-based indexes cleaned up successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup old indexes: {e}")
+        raise
 
 async def migrate_existing_data():
     """Migrate existing work updates to include followupCompleted field and update userId to internId"""

@@ -14,7 +14,9 @@ from bson import ObjectId
 import asyncio
 import os
 from config import Config
-
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
+from fastapi import Query
 from config import Config
 from database import (
     connect_to_mongo, close_mongo_connection, get_database, get_work_update_data,
@@ -137,18 +139,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# @app.get("/debug")
-# def debug():
-#     secret_key = os.getenv("API_SECRET_KEY")
-#     return {"API_SECRET_KEY": secret_key}
-
-# ProHub Integration Authentication
 async def get_current_intern(request: Request) -> dict:
     """
     Extract intern information from ProHub system via email authentication
-    Replaces JWT authentication with ProHub API integration
+    Accepts any email format - ProHub API validates if user is a trainee
     """
     try:
+        # TEMPORARY DEVELOPMENT BYPASS - REMOVE IN PRODUCTION
+        if Config.DEBUG:
+            logger.warning("Using development auth bypass")
+            return {
+                "intern_id": "test_intern_123",
+                "name": "Test Intern", 
+                "email": "test@gmail.com",  # Accept any email format
+                "department": "IT Development",
+                "batch": "2024",
+                "prohub_id": "test_intern_123"
+            }
+        
         # Method 1: Check X-User-Email header (from existing website Google Auth)
         user_email = request.headers.get("X-User-Email")
         
@@ -174,12 +182,15 @@ async def get_current_intern(request: Request) -> dict:
                 detail="Authentication required. User email not provided."
             )
         
-        # Validate email format
-        if not is_valid_company_email(user_email):
+        # Basic email format validation only (no domain restrictions)
+        if not user_email or '@' not in user_email:
             raise HTTPException(
                 status_code=401,
-                detail="Invalid email domain. Please use company email address."
+                detail="Invalid email format provided."
             )
+        
+        # REMOVED: Company domain validation - accept any email
+        # The ProHub API will validate if the user is actually a trainee
         
         # Authenticate via ProHub API
         user_info = await authenticate_via_prohub_email(user_email)
@@ -322,7 +333,6 @@ async def refresh_prohub_cache(current_intern: dict = Depends(get_current_intern
             detail=f"Failed to refresh cache: {str(e)}"
         )
 
-# Updated work update endpoints with ProHub integration
 @app.post("/api/work-updates")
 async def create_work_update(
     work_update: WorkUpdateCreate,
@@ -347,11 +357,8 @@ async def create_work_update(
         if work_update.status == WorkStatus.LEAVE:
             # ON LEAVE: Save directly to LogBook's DailyRecord collection
             daily_records = db["dailyrecords"]  # LogBook collection name
-            date_based_query = {"internId": ObjectId(intern_id), "date": today_date}
-            existing_record = await daily_records.find_one(date_based_query)
-
+            
             record_dict = {
-                "internId": ObjectId(intern_id),
                 "date": today_date,
                 "stack": work_update.stack,
                 "task": work_update.task or "On Leave",
@@ -359,6 +366,25 @@ async def create_work_update(
                 "blockers": "On Leave",
                 "status": "leave"
             }
+
+            # FIXED: Handle ObjectId properly
+            try:
+                # Check if intern_id is already a valid ObjectId format
+                if len(intern_id) == 24 and all(c in '0123456789abcdefABCDEF' for c in intern_id):
+                    record_dict["internId"] = ObjectId(intern_id)
+                    date_based_query = {"internId": ObjectId(intern_id), "date": today_date}
+                else:
+                    # For development/testing, use string format
+                    record_dict["internId"] = intern_id
+                    date_based_query = {"internId": intern_id, "date": today_date}
+                    logger.warning(f"Using string intern_id instead of ObjectId: {intern_id}")
+            except Exception as e:
+                # Fallback to string format
+                record_dict["internId"] = intern_id
+                date_based_query = {"internId": intern_id, "date": today_date}
+                logger.warning(f"Could not convert intern_id to ObjectId, using string: {e}")
+
+            existing_record = await daily_records.find_one(date_based_query)
 
             if existing_record:
                 await daily_records.replace_one({"_id": existing_record["_id"]}, record_dict)
@@ -387,7 +413,7 @@ async def create_work_update(
         else:
             # WORKING/WFH: Save to TEMPORARY collection (pending follow-up)
             update_dict = {
-                "internId": intern_id,
+                "internId": intern_id,  # Keep as string for temp collection
                 "date": today_date,
                 "stack": work_update.stack,
                 "task": work_update.task,
@@ -427,9 +453,82 @@ async def create_work_update(
         )
 
 # Start follow-up session using TEMP work update (with ProHub auth)
+# @app.post("/api/followups/start")
+# async def start_followup_session(
+#     temp_work_update_id: str,
+#     current_intern: dict = Depends(get_current_intern),
+#     ai_service: AIFollowupService = Depends(get_ai_service)
+# ):
+#     """Start follow-up session using temporary work update data"""
+#     try:
+#         db = get_database()
+#         followup_collection = db[Config.FOLLOWUP_SESSIONS_COLLECTION]
+#         intern_id = current_intern["intern_id"]
+
+#         # Get TEMPORARY work update data
+#         temp_work_update = await get_temp_work_update(temp_work_update_id)
+#         if not temp_work_update:
+#             raise HTTPException(
+#                 status_code=404, 
+#                 detail="Temporary work update not found (may have been auto-deleted after 24h)"
+#             )
+
+#         # Verify the temp work update belongs to the authenticated intern
+#         if str(temp_work_update.get("internId")) != str(intern_id):
+#             raise HTTPException(
+#                 status_code=403,
+#                 detail="Access denied - work update belongs to different intern"
+#             )
+
+#         today_date = datetime.now().strftime('%Y-%m-%d')
+#         session_date_id = f"{intern_id}_{uuid.uuid4().hex}"
+
+#         # Generate questions using temp data
+#         ai_input_data = {
+#             "description": temp_work_update.get("task"),  # Map task to description
+#             "challenges": temp_work_update.get("progress", ""),
+#             "plans": temp_work_update.get("blockers", ""),
+#             "user_id": intern_id
+#         }
+#         questions = await ai_service.generate_followup_questions(intern_id, work_update_data=ai_input_data)
+
+#         session_doc = {
+#             "_id": session_date_id,
+#             "internId": intern_id,
+#             "tempWorkUpdateId": temp_work_update_id, 
+#             "session_date": today_date,
+#             "questions": questions,
+#             "answers": [""] * len(questions),
+#             "status": SessionStatus.PENDING,
+#             "createdAt": datetime.now(),
+#             "completedAt": None
+#         }
+#         await followup_collection.replace_one({"_id": session_date_id}, session_doc, upsert=True)
+
+#         logger.info(f"Follow-up session started for intern {intern_id} with temp work update: {temp_work_update_id}")
+
+#         return {
+#             "message": f"AI follow-up session started for {current_intern['name']}",
+#             "sessionId": session_date_id,
+#             "questions": questions,
+#             "reminder": "Complete within 24 hours before auto-deletion",
+#             "internInfo": {
+#                 "name": current_intern["name"],
+#                 "email": current_intern["email"]
+#             }
+#         }
+
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error starting follow-up session: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Failed to start follow-up session: {str(e)}"
+#         ) 
 @app.post("/api/followups/start")
 async def start_followup_session(
-    temp_work_update_id: str,
+    temp_work_update_id: str = Query(..., description="Temporary work update ID"),
     current_intern: dict = Depends(get_current_intern),
     ai_service: AIFollowupService = Depends(get_ai_service)
 ):
@@ -438,6 +537,8 @@ async def start_followup_session(
         db = get_database()
         followup_collection = db[Config.FOLLOWUP_SESSIONS_COLLECTION]
         intern_id = current_intern["intern_id"]
+        
+        logger.info(f"Starting follow-up session for intern {intern_id} with temp update {temp_work_update_id}")
 
         # Get TEMPORARY work update data
         temp_work_update = await get_temp_work_update(temp_work_update_id)
@@ -459,11 +560,13 @@ async def start_followup_session(
 
         # Generate questions using temp data
         ai_input_data = {
-            "description": temp_work_update.get("task"),  # Map task to description
+            "description": temp_work_update.get("task", ""),  # Map task to description
             "challenges": temp_work_update.get("progress", ""),
             "plans": temp_work_update.get("blockers", ""),
             "user_id": intern_id
         }
+        
+        logger.info(f"Generating AI questions with data: {ai_input_data}")
         questions = await ai_service.generate_followup_questions(intern_id, work_update_data=ai_input_data)
 
         session_doc = {
@@ -477,9 +580,10 @@ async def start_followup_session(
             "createdAt": datetime.now(),
             "completedAt": None
         }
+        
         await followup_collection.replace_one({"_id": session_date_id}, session_doc, upsert=True)
 
-        logger.info(f"Follow-up session started for intern {intern_id} with temp work update: {temp_work_update_id}")
+        logger.info(f"Follow-up session created: {session_date_id}")
 
         return {
             "message": f"AI follow-up session started for {current_intern['name']}",
@@ -496,12 +600,14 @@ async def start_followup_session(
         raise
     except Exception as e:
         logger.error(f"Error starting follow-up session: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to start follow-up session: {str(e)}"
         )
 
-# Complete follow-up and MOVE temp to LogBook's DailyRecord (with ProHub auth)
+
 @app.put("/api/followup/{session_id}/complete")
 async def complete_followup_session(
     session_id: str,
@@ -560,9 +666,9 @@ async def complete_followup_session(
             {"$set": session_update}
         )
 
-        # MOVE temp work update to LogBook's DailyRecord collection
+        # FIXED: Handle ObjectId properly for LogBook compatibility
+        # Create the daily record document
         daily_record = {
-            "internId": ObjectId(intern_id),
             "date": temp_work_update["date"],
             "stack": temp_work_update["stack"],
             "task": temp_work_update["task"],
@@ -571,9 +677,23 @@ async def complete_followup_session(
             "status": temp_work_update["status"]
         }
 
+        # FIXED: Only add ObjectId if intern_id is a valid ObjectId format
+        try:
+            # Check if intern_id is already a valid ObjectId or can be converted
+            if len(intern_id) == 24 and all(c in '0123456789abcdefABCDEF' for c in intern_id):
+                daily_record["internId"] = ObjectId(intern_id)
+            else:
+                # For development/testing, use string format
+                daily_record["internId"] = intern_id
+                logger.warning(f"Using string intern_id instead of ObjectId: {intern_id}")
+        except Exception as e:
+            # Fallback to string format
+            daily_record["internId"] = intern_id
+            logger.warning(f"Could not convert intern_id to ObjectId, using string: {e}")
+
         # Check for existing record (override logic)
         existing_record = await daily_records.find_one({
-            "internId": ObjectId(intern_id),
+            "internId": daily_record["internId"],  # Use the same format as we stored
             "date": temp_work_update["date"]
         })
         
@@ -876,38 +996,47 @@ async def simple_ai_test():
             "timestamp": datetime.now().isoformat()
         }
     
-# Error handlers
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc: HTTPException):
     """Handle HTTP exceptions"""
-    return {
-        "error": "HTTP_ERROR",
-        "message": exc.detail,
-        "status_code": exc.status_code,
-        "timestamp": datetime.now().isoformat()
-    }
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "HTTP_ERROR",
+            "message": exc.detail,
+            "status_code": exc.status_code,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
 
 @app.exception_handler(ProHubIntegrationError)
 async def prohub_exception_handler(request, exc: ProHubIntegrationError):
     """Handle ProHub integration exceptions"""
     logger.error(f"ProHub integration error: {exc}")
-    return {
-        "error": "PROHUB_INTEGRATION_ERROR",
-        "message": "ProHub system temporarily unavailable",
-        "details": str(exc) if Config.DEBUG else None,
-        "timestamp": datetime.now().isoformat()
-    }
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "PROHUB_INTEGRATION_ERROR",
+            "message": "ProHub system temporarily unavailable",
+            "details": str(exc) if Config.DEBUG else None,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc: Exception):
     """Handle general exceptions"""
     logger.error(f"Unhandled exception: {exc}")
-    return {
-        "error": "INTERNAL_ERROR", 
-        "message": "An internal error occurred",
-        "details": str(exc) if Config.DEBUG else None,
-        "timestamp": datetime.now().isoformat()
-    }
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "INTERNAL_ERROR", 
+            "message": "An internal error occurred",
+            "details": str(exc) if Config.DEBUG else None,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn

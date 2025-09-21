@@ -396,28 +396,38 @@ async def check_prohub_api_health() -> Dict[str, Any]:
             "timestamp": datetime.now().isoformat()
         }
 
-
-# Utility functions for email validation
 def is_valid_company_email(email: str, allowed_domains: List[str] = None) -> bool:
     """
-    Validate if email is from allowed company domains
+    Validate email format - Accept any valid email for now
+    The ProHub API will handle trainee validation
     
     Args:
         email: Email to validate
-        allowed_domains: List of allowed domains (e.g., ['company.com', 'company.lk'])
+        allowed_domains: Optional list of allowed domains (if None, accepts all valid emails)
         
     Returns:
-        True if email is from allowed domain
+        True if email format is valid
     """
     if not email or '@' not in email:
         return False
     
+    # If no domain restrictions specified, accept any valid email format
     if not allowed_domains:
-        # Default allowed domains - adjust based on your company
-        allowed_domains = ['slt.com.lk', 'mobitel.lk', 'company.com']
+        try:
+            # Basic email format validation
+            local, domain = email.split('@', 1)
+            if len(local) > 0 and len(domain) > 0 and '.' in domain:
+                return True
+        except ValueError:
+            return False
+        return False
     
-    domain = email.split('@')[1].lower()
-    return domain in [d.lower() for d in allowed_domains]
+    # If domain restrictions are specified, check them
+    try:
+        domain = email.split('@')[1].lower()
+        return domain in [d.lower() for d in allowed_domains]
+    except (IndexError, AttributeError):
+        return False
 
 
 def extract_name_from_email(email: str) -> str:
