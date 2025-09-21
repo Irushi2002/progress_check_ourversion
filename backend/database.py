@@ -437,6 +437,13 @@ async def create_temp_work_update(work_update_data: dict) -> str:
     """Create temporary work update with internId support"""
     try:
         temp_collection = get_temp_collection()
+
+        if "date" not in work_update_data:
+            work_update_data["date"] = datetime.now().strftime('%Y-%m-%d')
+        
+        if "update_date" not in work_update_data:
+            work_update_data["update_date"] = work_update_data["date"]
+        
         
         # Check for existing temp update for same intern and date
         existing_temp = await temp_collection.find_one({

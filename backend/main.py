@@ -394,6 +394,7 @@ async def create_work_update(
         
         else:
             # WORKING/WFH: Save to TEMPORARY collection (pending follow-up)
+            today_date = datetime.now().strftime('%Y-%m-%d')
             update_dict = {
                 "internId": intern_id,  # Keep as string for temp collection
                 "date": today_date,
