@@ -125,7 +125,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Intern Management AI Service with ProHub Integration",
+    title="Intern Management AI Service",
     description="AI-powered follow-up question generation and analysis for intern management with ProHub trainee authentication",
     version="2.0.0",
     lifespan=lifespan
@@ -133,7 +133,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "https://prohub.slt.com.lk"],  
+    # allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "https://prohub.slt.com.lk"],  
+    allow_origins=["https://prohub.slt.com.lk"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],  
     allow_headers=["*"],
@@ -145,17 +146,6 @@ async def get_current_intern(request: Request) -> dict:
     Accepts any email format - ProHub API validates if user is a trainee
     """
     try:
-        # TEMPORARY DEVELOPMENT BYPASS - REMOVE IN PRODUCTION
-        if Config.DEBUG:
-            logger.warning("Using development auth bypass")
-            return {
-                "intern_id": "test_intern_123",
-                "name": "Test Intern", 
-                "email": "test@gmail.com",  # Accept any email format
-                "department": "IT Development",
-                "batch": "2024",
-                "prohub_id": "test_intern_123"
-            }
         
         # Method 1: Check X-User-Email header (from existing website Google Auth)
         user_email = request.headers.get("X-User-Email")
@@ -169,12 +159,6 @@ async def get_current_intern(request: Request) -> dict:
         if not user_email:
             user_email = request.headers.get("User-Email")
         
-        # Method 4: Development/testing fallback
-        if not user_email:
-            test_email = request.headers.get("X-Test-Email")
-            if test_email and Config.DEBUG:
-                logger.warning(f"Using test email authentication: {test_email}")
-                user_email = test_email
         
         if not user_email:
             raise HTTPException(
@@ -189,9 +173,7 @@ async def get_current_intern(request: Request) -> dict:
                 detail="Invalid email format provided."
             )
         
-        # REMOVED: Company domain validation - accept any email
-        # The ProHub API will validate if the user is actually a trainee
-        
+       
         # Authenticate via ProHub API
         user_info = await authenticate_via_prohub_email(user_email)
         

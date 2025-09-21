@@ -135,7 +135,7 @@ class ProHubIntegration:
             for trainee in trainees:
                 # Handle different email field names from ProHub API
                 trainee_email = ""
-                for email_field in ['email', 'Email', 'emailAddress', 'mail']:
+                for email_field in ['Trainee_Email','email', 'Email', 'emailAddress', 'mail']:
                     if email_field in trainee:
                         trainee_email = trainee.get(email_field, '').lower().strip()
                         break
@@ -150,6 +150,8 @@ class ProHubIntegration:
         except Exception as e:
             logger.error(f"Error finding trainee by email {email}: {e}")
             return None
+
+    
     
     async def find_trainee_by_id(self, trainee_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -216,19 +218,19 @@ class ProHubIntegration:
         """
         # Handle different field name variations from ProHub API
         intern_id = ""
-        for id_field in ['id', 'Id', 'ID', 'traineeId', 'TraineeId']:
+        for id_field in ['Trainee_ID','id', 'Id', 'ID', 'traineeId', 'TraineeId']:
             if id_field in trainee_data:
                 intern_id = str(trainee_data.get(id_field, ''))
                 break
         
         email = ""
-        for email_field in ['email', 'Email', 'emailAddress', 'mail']:
+        for email_field in ['Trainee_Email','email', 'Email', 'emailAddress', 'mail']:
             if email_field in trainee_data:
                 email = trainee_data.get(email_field, '').strip()
                 break
         
         name = ""
-        for name_field in ['name', 'Name', 'fullName', 'FullName', 'trainee_name']:
+        for name_field in ['Trainee_Name','name', 'Name', 'fullName', 'FullName', 'trainee_name']:
             if name_field in trainee_data:
                 name = trainee_data.get(name_field, '').strip()
                 break
