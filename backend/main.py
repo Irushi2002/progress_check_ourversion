@@ -1,3 +1,6 @@
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("pymongo").setLevel(logging.WARNING)
 from dotenv import load_dotenv
 load_dotenv()  # Must be first
 import uuid
