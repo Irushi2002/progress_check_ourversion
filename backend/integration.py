@@ -414,7 +414,7 @@ def is_valid_company_email(email: str, allowed_domains: List[str] = None) -> boo
     # If no domain restrictions specified, accept any valid email format
     if not allowed_domains:
         try:
-            # Basic email format validation
+             
             local, domain = email.split('@', 1)
             if len(local) > 0 and len(domain) > 0 and '.' in domain:
                 return True
@@ -422,7 +422,7 @@ def is_valid_company_email(email: str, allowed_domains: List[str] = None) -> boo
             return False
         return False
     
-    # If domain restrictions are specified, check them
+    
     try:
         domain = email.split('@')[1].lower()
         return domain in [d.lower() for d in allowed_domains]
@@ -442,7 +442,6 @@ def extract_name_from_email(email: str) -> str:
     """
     if "@" in email:
         local_part = email.split("@")[0]
-        # Convert dots/underscores to spaces and title case
         name = local_part.replace(".", " ").replace("_", " ").title()
         return name
     return "Trainee"
